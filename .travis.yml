@@ -1,14 +1,23 @@
 language: php
 
-sudo: false
-
 php:
-  - 5.3
-  - 5.4
   - 5.5
   - 5.6
   - 7
-  - hhvm
+  - 7.1
+
+matrix:
+  include:
+    # Add build to run tests against Firefox (other runs are agains HtmlUnit by default)
+    - php: 7
+      env: BROWSER_NAME="firefox"
+    # Add PHP 7 build to check codestyle only in PHP 7 build
+    - php: 7
+      env: CHECK_CODESTYLE=1
+      before_script: ~
+      script:
+        - ./vendor/bin/php-cs-fixer fix --diff --dry-run
+        - ./vendor/bin/phpcs --standard=PSR2 ./lib/ ./tests/
 
 env:
   global:
@@ -17,20 +26,35 @@ env:
 cache:
   directories:
     - $HOME/.composer/cache
+    - jar
 
 before_install:
-  - composer self-update
+  - travis_retry composer self-update
 
 install:
-  - composer install --no-interaction --prefer-source
+  - travis_retry composer install --no-interaction
 
 before_script:
   - sh -e /etc/init.d/xvfb start
-  - wget -q -t 3 http://selenium-release.storage.googleapis.com/2.45/selenium-server-standalone-2.45.0.jar
-  - java -jar selenium-server-standalone-2.45.0.jar -log selenium.log &
-  - until $(echo | nc localhost 4444); do sleep 1; echo waiting for selenium-server...; done;
+  # TODO: upgrade to Selenium 3.0.2 (with latest HtmlUnit) once released, as HtmlUnit in 3.0.1 is broken
+  - if [ ! -f jar/selenium-server-standalone-2.53.1.jar ]; then wget -q -t 3 -P jar https://selenium-release.storage.googleapis.com/2.53/selenium-server-standalone-2.53.1.jar; fi
+  - if [ ! -f jar/htmlunit-driver-standalone-2.20.jar ]; then wget -q -t 3 -P jar https://github.com/SeleniumHQ/htmlunit-driver/releases/download/2.20/htmlunit-driver-standalone-2.20.jar; fi
+  # Temporarily run HtmlUnit from standalone jar file (it was not part of Selenium server standalone in version 2.53)
+  - java -cp "jar/selenium-server-standalone-2.53.1.jar:jar/htmlunit-driver-standalone-2.20.jar" org.openqa.grid.selenium.GridLauncher -log selenium.log &
+  # TODO: use this after upgrade to Selenium 3.0.2
+  #- /usr/lib/jvm/java-8-oracle/bin/java -Dwebdriver.firefox.marionette=false -jar jar/selenium-server-standalone-3.0.2.jar -log selenium.log &
+  - until $(echo | nc localhost 4444); do sleep 1; echo waiting for selenium-server...; done
+  - php -S localhost:8000 -t tests/functional/web/ &>>php-server.log &
 
-script: ./vendor/bin/phpunit
+script:
+  - ./vendor/bin/phpunit
 
 after_script:
   - cat selenium.log
+  - cat php-server.log
+
+addons:
+  firefox: "latest-esr"
+  apt:
+    packages:
+      - oracle-java8-installer
